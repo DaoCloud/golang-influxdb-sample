@@ -80,6 +80,7 @@ func insert() {
 
     _, err := ic.Write(bps)
     if err != nil {
+        log.Println("Insert data error:")
         log.Fatal(err)
     }
 }
