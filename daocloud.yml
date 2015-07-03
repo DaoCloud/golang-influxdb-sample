@@ -1,0 +1,18 @@
+image: daocloud/ci-golang:1.4
+
+services:
+  - influxdb
+
+env:
+  - INFLUXDB_USERNAME=""
+  - INFLUXDB_PASSWORD=""
+  - INFLUXDB_INSTANCE="test"
+
+before_script:
+  - mkdir -p /gopath/src/golang-influxdb-sample
+  - mv ./* /gopath/src/golang-influxdb-sample
+
+script:
+  - export GOPATH=/gopath
+  - go get -t golang-influxdb-sample
+  - go test golang-influxdb-sample
