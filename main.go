@@ -110,7 +110,7 @@ func main() {
 	http.HandleFunc("/", hello)
 
 	log.Println("Start listening...")
-	if err := http.ListenAndServe(":3030", nil); err != nil {
+	if err := http.ListenAndServe(":80", nil); err != nil {
 		log.Fatal(err)
 	}
 }
