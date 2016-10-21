@@ -8,7 +8,7 @@ import (
     "net/http"
     "net/url"
 
-    "github.com/influxdb/influxdb/client"
+    "github.com/influxdata/influxdb/client/v2"
 )
 
 var ic *client.Client
