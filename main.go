@@ -1,17 +1,16 @@
 package main
 
 import (
-    "log"
-    "fmt"
-    "time"
-    "os"
-    "net/http"
-    "net/url"
+	"fmt"
+	"log"
+	"net/http"
+	"os"
+	"time"
 
-    "github.com/influxdata/influxdb/client/v2"
+	"github.com/influxdata/influxdb/client/v2"
 )
 
-var ic *client.Client
+var ic client.Client
 
 var host string
 var port string
@@ -20,131 +19,98 @@ var user string
 var password string
 
 func connect() {
-    u, err := url.Parse(fmt.Sprintf("http://%s:%s", host, port))
-    if err != nil {
-        log.Fatal(err)
-    }
+	u := fmt.Sprintf("http://%s:%s", host, port)
+	var err error
+	ic, err = client.NewHTTPClient(client.HTTPConfig{Addr: u, Username: user, Password: password})
+	if err != nil {
+		log.Fatal(err)
+	}
+	if _, _, err := ic.Ping(time.Second * 5); err != nil {
+		log.Fatal(err)
+	}
 
-    ic, err = client.NewClient(client.Config{URL: *u})
-    if err != nil {
-        log.Fatal(err)
-    }
-
-    if _, _, err := ic.Ping(); err != nil {
-        log.Fatal(err)
-    }
-
-    ic.SetAuth(user, password)
 }
-
-func create() {
-    // Workaround, since daocloud influxdb haven't privision an instance
-    // create the db instance here
-    q := client.Query{
-        Command:  fmt.Sprintf("create database %s", db),
-        Database: db,
-    }
-
-    // ignore the error of existing database
-    ic.Query(q)
-}
-
 
 func insert() {
-    var (
-        shapes     = []string{"circle", "rectangle", "square", "triangle"}
-        colors     = []string{"red",    "blue",      "green",  "yellow"  }
-        sampleSize = 4
-        pts        = make([]client.Point, sampleSize)
-    )
+	// Create a new point batch
+	bp, err := client.NewBatchPoints(client.BatchPointsConfig{
+		Database:  db,
+		Precision: "s",
+	})
 
-    for i := 0; i < sampleSize; i++ {
-        pts[i] = client.Point{
-            Measurement: "shapes",
-            Tags: map[string]string{
-                "color": colors[i],
-                "shape": shapes[i],
-            },
-            Fields: map[string]interface{}{
-                "value": i,
-            },
-            Time: time.Now(),
-        }
-    }
+	if err != nil {
+		log.Fatalln("Error: ", err)
+	}
 
-    bps := client.BatchPoints{
-        Points:          pts,
-        Database:        db,
-        RetentionPolicy: "default",
-    }
+	// Create a point and add to batch
+	tags := map[string]string{"cpu": "cpu-total"}
+	fields := map[string]interface{}{
+		"idle":   10.1,
+		"system": 53.3,
+		"user":   46.6,
+	}
+	pt, err := client.NewPoint("cpu_usage", tags, fields, time.Now())
 
-    _, err := ic.Write(bps)
-    if err != nil {
-        log.Println("Insert data error:")
-        log.Fatal(err)
-    }
+	if err != nil {
+		log.Fatalln("Error: ", err)
+	}
+
+	bp.AddPoint(pt)
+
+	// Write the batch
+	ic.Write(bp)
 }
 
-func query() map[string]string {
-    q := client.Query{
-        Command:  "select * from shapes where value = 0",
-        Database: db,
-    }
-
-    response, err := ic.Query(q)
-    if err != nil {
-        log.Println("Error, ", err)
-        return nil
-    }
-
-    if response.Error() != nil {
-        log.Println("Response error, ", response.Error())
-        return nil
-    }
-
-    result := response.Results[0]
-    if result.Err != nil {
-        log.Println("Result error, ", result.Err)
-        return nil
-    }
-
-    serie := result.Series[0]
-    if serie.Err != nil {
-        log.Println("Serie error, ", serie.Err)
-        return nil
-    }
-
-    return serie.Tags
+func queryDB(cmd string) (res []client.Result, err error) {
+	q := client.Query{
+		Command:  cmd,
+		Database: db,
+	}
+	if response, err := ic.Query(q); err == nil {
+		if response.Error() != nil {
+			return res, response.Error()
+		}
+		res = response.Results
+	} else {
+		return res, err
+	}
+	return res, nil
 }
 
 func hello(res http.ResponseWriter, req *http.Request) {
-    m := query()
-    res.Write([]byte(fmt.Sprintf("The first shape is %s %s!", m["color"], m["shape"])))
+	q := fmt.Sprintf("SELECT * FROM %s LIMIT %d", "cpu_usage", 20)
+
+	m, err := queryDB(q)
+	if err != nil {
+		fmt.Println("query failed!err:=%v", err)
+	}
+	res.Write([]byte(fmt.Sprintf("The first cpu_measure is %v!", m[0].Series[0])))
 }
 
 func main() {
-    host = os.Getenv("INFLUXDB_PORT_8086_TCP_ADDR")
-    port = os.Getenv("INFLUXDB_PORT_8086_TCP_PORT")
-    db = os.Getenv("INFLUXDB_INSTANCE")
-    user = os.Getenv("INFLUXDB_USERNAME")
-    password = os.Getenv("INFLUXDB_PASSWORD")
+	host = os.Getenv("INFLUXDB_PORT_8086_TCP_ADDR")
+	port = os.Getenv("INFLUXDB_PORT_8086_TCP_PORT")
+	db = os.Getenv("INFLUXDB_INSTANCE")
+	user = os.Getenv("INFLUXDB_USERNAME")
+	password = os.Getenv("INFLUXDB_PASSWORD")
+	connect()
+	log.Println("Successfully connect to influxdb ...")
+	// workaround, daocloud influxdb have not privision db instance
+	if len(db) == 0 {
+		db = "mydb"
+		// prepare data
+		_, err := queryDB(fmt.Sprintf("CREATE DATABASE %s", db))
+		if err != nil {
+			log.Fatal(err)
+		}
+	}
 
-    // workaround, daocloud influxdb have not privision db instance
-    if len(db) == 0 {
-        db = "mydb"
-    }
+	insert()
 
-    connect()
-    log.Println("Successfully connect to influxdb ...")
+	http.HandleFunc("/", hello)
 
-    // prepare data
-    create()
-    insert()
-
-    http.HandleFunc("/", hello)
-
-    log.Println("Start listening...")
-    if err := http.ListenAndServe(":80", nil); err != nil {
-        log.Fatal(err)
-    }
+	log.Println("Start listening...")
+	if err := http.ListenAndServe(":3030", nil); err != nil {
+		log.Fatal(err)
+	}
 }
